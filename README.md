@@ -1,6 +1,6 @@
 # Agentic Compatibility Annotation Workflow
 
-An agentic workflow for labeling whether **two products are compatible** based on their **text** and optional **image-derived summaries**, with:
+An agentic workflow for labeling whether **two products are compatible** based on their **text** and optional **image-derived summaries**. To run the demo, type "python run_demo.py". The project has following subsections:
 
 - a **main annotation agent**
 - a **reflection agent** that critiques the decision
@@ -19,82 +19,157 @@ This project is designed for product-pair annotation settings such as furniture,
 
 ---
 
-## Overview
+## File descriptions
 
-The system does **not** rely on one single prompt.
+### `schemas.py`
+Defines the main data structures used throughout the project, such as:
 
-Instead, it uses a multi-step workflow:
+- `Product`
+- `ProductPair`
+- `RetrievedExample`
+- `SupportEvidence`
+- `AnnotationDecision`
+- `ReflectionFeedback`
+- `LearnedRule`
+- `RepresentativeExample`
+- `PolicySlice`
+- `PipelineOutput`
 
-1. **Feature building**
-   - Build structured support signals from text and image summaries.
-   - These features are not the final decision.
+### `tools.py`
+Builds deterministic support evidence from the current product pair.
 
-2. **Retrieval**
-   - Retrieve similar **human-labeled product pairs** from memory.
-   - Use them as analogies, not hard rules.
+Typical outputs include:
 
-3. **Main annotation agent**
-   - Predict:
-     - `compatible`
-     - `incompatible`
-     - `uncertain`
-   - Return confidence and rationale.
+- compact product text
+- token overlap
+- shared keywords
+- category information
+- image summary presence
+- other lightweight support signals
 
-4. **Reflection agent**
-   - Check whether the decision is:
-     - grounded
-     - overconfident
-     - inconsistent with retrieved human examples
-     - inconsistent with learned policy rules
+These features are **inputs** to the agents, not the final compatibility decision.
 
-5. **Policy learning**
-   - When the system performs poorly on labeled cases, it converts those mistakes into:
-     - **short reusable rules**
-     - optionally **a representative example**
-   - This keeps the prompt short and policy-oriented.
+### `retriever.py`
+Stores and retrieves similar **human-labeled** training pairs.
 
-6. **Evaluation**
-   - Compare the final agent output to human annotators on held-out benchmark data.
+This retrieval layer is used for:
+
+- few-shot grounding
+- checking how humans labeled similar situations
+- exposing ambiguity in similar examples
+
+### `prompts.py`
+Builds compact prompts for:
+
+- the main annotator
+- the reflection agent
+- the policy learner
+
+This file is important because it controls prompt size by:
+
+- compressing product information
+- using only a few retrieved examples
+- inserting learned rules instead of long raw case dumps
+
+### `agents.py`
+Contains the main agent logic:
+
+- `MainAnnotatorAgent`
+- `ReflectionAgent`
+- `PolicyLearnerAgent`
+
+Responsibilities:
+
+- call the LLM
+- parse structured JSON outputs
+- reflect on earlier decisions
+- convert wrong cases into reusable policy rules
+
+### `policy_memory.py`
+Stores and serves learned policy information.
+
+This memory contains:
+
+- short reusable rules
+- optional representative examples
+
+It also enforces a prompt budget so the prompt does not grow without bound.
+
+### `orchestrator.py`
+Coordinates the full workflow:
+
+- build support evidence
+- retrieve examples
+- get a policy slice
+- run the main annotator
+- run the reflector
+- retry up to `max_turn`
+- evaluate against human labels
+- learn new policy rules when useful
+
+### `evaluation.py`
+Evaluates the agent against human annotations using metrics such as:
+
+- majority vote accuracy
+- average agent-human agreement
+- human consensus strength
+- uncertain rate
+- uncertain rate under human disagreement
+
+### `llm_client.py`
+Provides the model client wrapper.
+
+You can connect it to:
+
+- a mock client for development
+- DashScope / Qwen for real inference
+
+### `run_demo.py`
+Demo entry point.
+
+This file typically:
+
+- creates training memory
+- creates benchmark pairs
+- instantiates the workflow
+- runs annotation and evaluation
+- prints turn-by-turn traces
 
 ---
 
-## Main idea
-
-A naive LLM workflow often fails because it:
-
-- over-relies on fluent reasoning
-- becomes overconfident on weak evidence
-- keeps stuffing more cases into the prompt
-- lets prompt length grow too much over time
-
-This project addresses those issues by:
-
-- separating **retrieval memory** from **policy memory**
-- learning **short general rules** from failure cases
-- only keeping a few **representative examples**
-- controlling prompt length with a **budgeted policy slice**
-
-Instead of repeatedly pasting raw wrong cases into the prompt, the system tries to learn compact rules such as:
-
-- Two items should fit the **same setting** to be compatible.
-- Cross-room pairs are usually incompatible unless explicitly designed to go together.
-- Functional complementarity alone is not enough if the pairing context is implausible.
-- Weak evidence should often map to `uncertain`, not a forced hard label.
-
----
-
-## Project structure
+## Workflow diagram
 
 ```text
-Agentic Workflow/
-├── agents.py
-├── evaluation.py
-├── llm_client.py
-├── orchestrator.py
-├── policy_memory.py
-├── prompts.py
-├── retriever.py
-├── run_demo.py
-├── schemas.py
-├── tools.py
-└── .gitignore
+Raw pair (text + optional image summaries)
+        |
+        v
+Support evidence builder
+        |
+        v
+Retrieve similar human-labeled pairs
+        |
+        v
+Policy memory slice
+(short rules + representative examples)
+        |
+        v
+Main annotation agent
+(label + confidence + rationale)
+        |
+        v
+Reflection agent
+(check grounding / confidence / policy consistency)
+        |
+   +----+----+
+   |         |
+ accept     revise prompt
+   |         |
+   |      retry (max_turn)
+   v
+Final prediction
+        |
+        v
+Compare to held-out human labels
+        |
+        v
+Policy learner updates reusable rules
